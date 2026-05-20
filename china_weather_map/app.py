@@ -6,7 +6,7 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from weather_service import fetch_weather, is_suspect_input
-from city_codes import is_valid_city
+from city_codes import is_valid_city, get_province_adcode, get_province_cities
 
 app = FastAPI(title="中国地图天气查询", version="1.0.0")
 
@@ -78,6 +78,60 @@ async def get_weather(city: str = Query(None, description="城市名称")):
             status_code=500,
             content={"error": f"服务错误: {str(e)}"}
         )
+
+
+@app.get("/api/province/geojson")
+async def get_province_geojson(province: str = Query(None, description="省份简称")):
+    """
+    获取省份下钻地图 GeoJSON 数据
+    从阿里云 DataV 获取地级市边界数据
+    """
+    if province is None or province.strip() == "":
+        return JSONResponse(status_code=400, content={"error": "缺少 province 参数"})
+
+    province = province.strip()
+
+    if is_suspect_input(province):
+        return JSONResponse(status_code=400, content={"error": "无效的省份名"})
+
+    adcode = get_province_adcode(province)
+    if not adcode:
+        return JSONResponse(status_code=400, content={"error": f"不支持的省份: {province}"})
+
+    try:
+        import httpx
+        url = f"https://geo.datav.aliyun.com/areas_v3/bound/{adcode}_full.json"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return JSONResponse(
+                    status_code=502,
+                    content={"error": "获取省份地图数据失败"}
+                )
+            return JSONResponse(content=resp.json())
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"获取省份地图数据失败: {str(e)}"}
+        )
+
+
+@app.get("/api/province/cities")
+async def get_province_cities_api(province: str = Query(None, description="省份简称")):
+    """获取省份下辖城市列表"""
+    if province is None or province.strip() == "":
+        return JSONResponse(status_code=400, content={"error": "缺少 province 参数"})
+
+    province = province.strip()
+
+    if is_suspect_input(province):
+        return JSONResponse(status_code=400, content={"error": "无效的省份名"})
+
+    cities = get_province_cities(province)
+    if not cities:
+        return JSONResponse(status_code=400, content={"error": f"不支持的省份: {province}"})
+
+    return JSONResponse(content={"province": province, "cities": cities})
 
 
 if __name__ == "__main__":

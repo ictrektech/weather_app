@@ -18,11 +18,56 @@
             padding: 12px 0;
             background: linear-gradient(135deg, #16213e, #0f3460);
             border-bottom: 2px solid #e94560;
+            position: relative;
         }
         #header h1 {
             font-size: 24px;
             color: #fff;
             letter-spacing: 4px;
+        }
+        #breadcrumb {
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #breadcrumb span {
+            color: #a0a0a0;
+            cursor: default;
+        }
+        #breadcrumb a {
+            color: #e94560;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        #breadcrumb a:hover {
+            text-decoration: underline;
+        }
+        #breadcrumb .separator {
+            color: #555;
+            margin: 0 2px;
+        }
+        #back-btn {
+            display: none;
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            padding: 6px 16px;
+            background: rgba(233, 69, 96, 0.2);
+            color: #e94560;
+            border: 1px solid #e94560;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.3s;
+        }
+        #back-btn:hover {
+            background: rgba(233, 69, 96, 0.4);
         }
         #chart-container {
             width: 100vw;
@@ -91,11 +136,44 @@
             color: #a0a0a0;
             font-size: 13px;
         }
+        #map-loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(15, 52, 96, 0.95);
+            border: 1px solid #e94560;
+            border-radius: 8px;
+            padding: 20px 40px;
+            z-index: 200;
+            color: #fff;
+            font-size: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        #map-loading .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e94560;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
     <div id="header">
+        <div id="breadcrumb">
+            <a onclick="goBackToChina()">中国</a>
+        </div>
         <h1>中国地图天气查询</h1>
+        <button id="back-btn" onclick="goBackToChina()">返回全国</button>
     </div>
     <div id="chart-container"></div>
     <div id="weather-panel">
@@ -110,6 +188,9 @@
             <a id="detail-link" href="#" target="_blank" rel="noopener noreferrer">查看详情</a>
         </div>
         <div id="weather-error" style="display:none; color:#e94560; font-size:13px; margin-top:8px;"></div>
+    </div>
+    <div id="map-loading">
+        <span class="spinner"></span>正在加载省份地图...
     </div>
 
     <script>
@@ -129,6 +210,9 @@
 
         let myChart = null;
         let currentCity = '';
+        let currentLevel = 'china'; // 'china' or 'province'
+        let currentProvince = '';    // 当前所在省份简称
+        let currentProvinceFullName = ''; // 当前所在省份全名
 
         // 安全转义 HTML，防止 XSS
         function escapeHtml(str) {
@@ -214,29 +298,44 @@
             currentCity = '';
         });
 
-        // 初始化地图
-        async function initMap() {
-            myChart = echarts.init(document.getElementById('chart-container'));
+        // 更新面包屑和返回按钮
+        function updateBreadcrumb() {
+            const breadcrumb = document.getElementById('breadcrumb');
+            const backBtn = document.getElementById('back-btn');
 
-            // 加载中国地图 GeoJSON
-            try {
-                const response = await fetch('/static/china.json');
-                const chinaJson = await response.json();
-                echarts.registerMap('china', chinaJson);
-            } catch (e) {
-                console.error('加载地图数据失败:', e);
-                document.getElementById('chart-container').innerHTML =
-                    '<p style="text-align:center;padding:50px;color:#e94560;">地图数据加载失败，请刷新页面重试</p>';
-                return;
+            if (currentLevel === 'china') {
+                breadcrumb.innerHTML = '<span>中国</span>';
+                backBtn.style.display = 'none';
+                document.querySelector('#header h1').textContent = '中国地图天气查询';
+            } else {
+                breadcrumb.innerHTML =
+                    '<a onclick="goBackToChina()">中国</a>' +
+                    '<span class="separator">/</span>' +
+                    '<span>' + escapeHtml(currentProvinceFullName || currentProvince) + '</span>';
+                backBtn.style.display = 'block';
+                document.querySelector('#header h1').textContent = (currentProvinceFullName || currentProvince) + ' 天气查询';
             }
+        }
 
+        // 返回全国地图
+        function goBackToChina() {
+            if (currentLevel === 'china') return;
+            currentLevel = 'china';
+            currentProvince = '';
+            currentProvinceFullName = '';
+            currentCity = '';
+            document.getElementById('weather-panel').style.display = 'none';
+            updateBreadcrumb();
+            renderChinaMap();
+        }
+
+        // 渲染全国地图
+        function renderChinaMap() {
             const option = {
                 tooltip: {
                     trigger: 'item',
                     formatter: function(params) {
-                        const name = params.name;
-                        const queryName = provinceMap[name] || name;
-                        return '<span style="font-size:14px;font-weight:bold;">' + escapeHtml(name) + '</span><br/><span style="font-size:12px;color:#aaa;">悬停查看天气</span>';
+                        return '<span style="font-size:14px;font-weight:bold;">' + escapeHtml(params.name) + '</span><br/><span style="font-size:12px;color:#aaa;">点击查看省内城市天气</span>';
                     },
                     backgroundColor: 'rgba(15, 52, 96, 0.9)',
                     borderColor: '#e94560',
@@ -283,16 +382,157 @@
                     data: []
                 }]
             };
+            myChart.setOption(option, true);
+        }
 
-            myChart.setOption(option);
+        // 渲染省份地图
+        function renderProvinceMap(provinceName, geoJson) {
+            const mapName = 'province-' + provinceName;
+            echarts.registerMap(mapName, geoJson);
 
-            // 鼠标悬停事件
+            const option = {
+                tooltip: {
+                    trigger: 'item',
+                    formatter: function(params) {
+                        return '<span style="font-size:14px;font-weight:bold;">' + escapeHtml(params.name) + '</span><br/><span style="font-size:12px;color:#aaa;">悬停查看天气</span>';
+                    },
+                    backgroundColor: 'rgba(15, 52, 96, 0.9)',
+                    borderColor: '#e94560',
+                    textStyle: { color: '#fff' }
+                },
+                visualMap: {
+                    show: false,
+                    min: 0,
+                    max: 100,
+                    inRange: {
+                        color: ['#1a1a2e', '#16213e', '#0f3460', '#1a508b', '#2a6fbb']
+                    }
+                },
+                series: [{
+                    name: provinceName,
+                    type: 'map',
+                    map: mapName,
+                    roam: true,
+                    zoom: 1.0,
+                    scaleLimit: { min: 0.8, max: 12 },
+                    label: {
+                        show: true,
+                        color: '#a0a0a0',
+                        fontSize: 11
+                    },
+                    emphasis: {
+                        label: {
+                            show: true,
+                            color: '#fff',
+                            fontSize: 14,
+                            fontWeight: 'bold'
+                        },
+                        itemStyle: {
+                            areaColor: '#e94560',
+                            shadowBlur: 20,
+                            shadowColor: 'rgba(233, 69, 96, 0.5)'
+                        }
+                    },
+                    itemStyle: {
+                        areaColor: '#16213e',
+                        borderColor: '#0f3460',
+                        borderWidth: 1
+                    },
+                    data: []
+                }]
+            };
+            myChart.setOption(option, true);
+        }
+
+        // 加载并进入省份地图
+        async function drillDownToProvince(provinceShortName, provinceFullName) {
+            const mapLoading = document.getElementById('map-loading');
+            mapLoading.style.display = 'block';
+
+            try {
+                const url = '/api/province/geojson?province=' + encodeURIComponent(provinceShortName);
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    alert(data.error || '加载省份地图失败');
+                    mapLoading.style.display = 'none';
+                    return;
+                }
+
+                currentLevel = 'province';
+                currentProvince = provinceShortName;
+                currentProvinceFullName = provinceFullName || provinceShortName;
+                currentCity = '';
+                document.getElementById('weather-panel').style.display = 'none';
+
+                updateBreadcrumb();
+                renderProvinceMap(provinceShortName, data);
+            } catch (e) {
+                alert('网络请求失败，请稍后重试');
+            } finally {
+                mapLoading.style.display = 'none';
+            }
+        }
+
+        // 省级地图中城市名到查询名的映射
+        // GeoJSON中城市名可能是"石家庄市"，查询时需要"石家庄"
+        // 对于简单后缀（市、盟、地区）直接去除，对于自治州等复杂名称需要特殊映射
+        const geoCityNameMap = {
+            '昌吉回族自治州': '昌吉', '博尔塔拉蒙古自治州': '博尔塔拉',
+            '巴音郭楞蒙古自治州': '巴音郭楞', '克孜勒苏柯尔克孜自治州': '克孜勒苏',
+            '伊犁哈萨克自治州': '伊犁', '延边朝鲜族自治州': '延边',
+            '恩施土家族苗族自治州': '恩施', '湘西土家族苗族自治州': '湘西',
+            '黔西南布依族苗族自治州': '黔西南', '黔东南苗族侗族自治州': '黔东南',
+            '黔南布依族苗族自治州': '黔南',
+            '西双版纳傣族自治州': '西双版纳', '德宏傣族景颇族自治州': '德宏',
+            '怒江傈僳族自治州': '怒江', '迪庆藏族自治州': '迪庆',
+            '大理白族自治州': '大理', '红河哈尼族彝族自治州': '红河',
+            '文山壮族苗族自治州': '文山', '楚雄彝族自治州': '楚雄',
+            '临夏回族自治州': '临夏', '甘南藏族自治州': '甘南',
+            '海南藏族自治州': '海南州', '海北藏族自治州': '海北',
+            '黄南藏族自治州': '黄南', '果洛藏族自治州': '果洛',
+            '海西蒙古族藏族自治州': '海西',
+            '阿坝藏族羌族自治州': '阿坝', '甘孜藏族自治州': '甘孜',
+            '凉山彝族自治州': '凉山',
+        };
+
+        function stripCitySuffix(name) {
+            // 先查特殊映射表
+            if (geoCityNameMap[name]) return geoCityNameMap[name];
+            // 去掉常见简单后缀
+            return name.replace(/(市|地区|盟|县|区)$/,'');
+        }
+
+        // 初始化地图
+        async function initMap() {
+            myChart = echarts.init(document.getElementById('chart-container'));
+
+            // 加载中国地图 GeoJSON
+            try {
+                const response = await fetch('/static/china.json');
+                const chinaJson = await response.json();
+                echarts.registerMap('china', chinaJson);
+            } catch (e) {
+                console.error('加载地图数据失败:', e);
+                document.getElementById('chart-container').innerHTML =
+                    '<p style="text-align:center;padding:50px;color:#e94560;">地图数据加载失败，请刷新页面重试</p>';
+                return;
+            }
+
+            renderChinaMap();
+
+            // 鼠标悬停事件 - 查询天气
             let hoverTimer = null;
             myChart.on('mouseover', function(params) {
-                if (params.componentType === 'series') {
-                    const name = params.name;
-                    const queryName = provinceMap[name] || name;
-                    // 延迟 300ms 查询，避免频繁请求
+                if (params.componentType === 'series' && params.name) {
+                    let queryName;
+                    if (currentLevel === 'china') {
+                        queryName = provinceMap[params.name] || params.name;
+                    } else {
+                        // 省级地图，去掉"市"等后缀
+                        queryName = stripCitySuffix(params.name);
+                    }
                     clearTimeout(hoverTimer);
                     hoverTimer = setTimeout(function() {
                         fetchWeather(queryName);
@@ -302,6 +542,17 @@
 
             myChart.on('mouseout', function(params) {
                 clearTimeout(hoverTimer);
+            });
+
+            // 点击事件 - 全国地图下钻到省份
+            myChart.on('click', function(params) {
+                if (params.componentType === 'series' && params.name) {
+                    if (currentLevel === 'china') {
+                        const shortName = provinceMap[params.name] || params.name;
+                        drillDownToProvince(shortName, params.name);
+                    }
+                    // 省级地图中点击城市仅查询天气（已在hover中处理）
+                }
             });
 
             // 响应窗口大小变化

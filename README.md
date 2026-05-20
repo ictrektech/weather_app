@@ -2,22 +2,52 @@
 
 交互式中国地图天气查询 Web 应用。用户在地图上悬停省份即可查看实时天气，点击可跳转中国天气网详情页。
 
-## 安装
+## 快速开始
+
+### 1. 克隆仓库
 
 ```bash
+git clone <repo-url> weather_app
+cd weather_app
+```
+
+### 2. 安装依赖
+
+建议使用虚拟环境：
+
+```bash
+python3 -m venv venv
+source venv/bin/activate   # Linux/macOS
+# venv\Scripts\activate    # Windows
+
 cd china_weather_map
 pip install -r requirements.txt
 ```
 
-## 启动
+依赖清单：
+- fastapi==0.104.1
+- uvicorn==0.24.0
+- httpx==0.25.2
+- pytest==7.4.3
+- pytest-asyncio==0.23.2
+
+### 3. 启动服务
 
 ```bash
+cd china_weather_map
 bash start.sh
+```
+
+或手动启动：
+
+```bash
+cd china_weather_map
+python -m uvicorn app:app --host 0.0.0.0 --port 7878
 ```
 
 服务将监听 `0.0.0.0:7878`。
 
-## 访问
+### 4. 访问应用
 
 - 首页: http://localhost:7878/
 - 健康检查: http://localhost:7878/health
@@ -61,6 +91,75 @@ pytest test_app.py -v
 {
   "error": "缺少 city 参数"
 }
+```
+
+## 部署
+
+### 直接部署
+
+```bash
+# 1. 克隆并进入项目
+git clone <repo-url>
+cd weather_app/china_weather_map
+
+# 2. 安装依赖（建议虚拟环境）
+pip install -r requirements.txt
+
+# 3. 启动（前台）
+python -m uvicorn app:app --host 0.0.0.0 --port 7878
+```
+
+### 后台运行
+
+```bash
+nohup python -m uvicorn app:app --host 0.0.0.0 --port 7878 > server.log 2>&1 &
+```
+
+### Systemd 服务（推荐生产环境）
+
+创建 `/etc/systemd/system/weather-app.service`：
+
+```ini
+[Unit]
+Description=China Weather Map App
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/path/to/weather_app/china_weather_map
+ExecStart=/path/to/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 7878
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动并启用：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start weather-app
+sudo systemctl enable weather-app
+```
+
+### Docker 部署
+
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY china_weather_map/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY china_weather_map/ .
+EXPOSE 7878
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7878"]
+```
+
+构建并运行：
+
+```bash
+docker build -t weather-app .
+docker run -d -p 7878:7878 --name weather-app weather-app
 ```
 
 ## 安全特性
