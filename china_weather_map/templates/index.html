@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国地图天气查询</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        #header {
+            text-align: center;
+            padding: 12px 0;
+            background: linear-gradient(135deg, #16213e, #0f3460);
+            border-bottom: 2px solid #e94560;
+        }
+        #header h1 {
+            font-size: 24px;
+            color: #fff;
+            letter-spacing: 4px;
+        }
+        #chart-container {
+            width: 100vw;
+            height: calc(100vh - 52px);
+        }
+        #weather-panel {
+            display: none;
+            position: fixed;
+            top: 70px;
+            right: 20px;
+            width: 300px;
+            background: rgba(15, 52, 96, 0.95);
+            border: 1px solid #e94560;
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        #weather-panel h2 {
+            color: #e94560;
+            margin-bottom: 12px;
+            font-size: 20px;
+        }
+        .weather-item {
+            margin: 8px 0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .weather-item .label {
+            color: #a0a0a0;
+            margin-right: 8px;
+        }
+        .weather-item .value {
+            color: #fff;
+            font-weight: bold;
+        }
+        #detail-link {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 8px 16px;
+            background: #e94560;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        #detail-link:hover {
+            background: #c73750;
+        }
+        #close-panel {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            background: none;
+            border: none;
+            color: #a0a0a0;
+            font-size: 18px;
+            cursor: pointer;
+        }
+        #close-panel:hover { color: #fff; }
+        #loading {
+            display: none;
+            text-align: center;
+            padding: 10px;
+            color: #a0a0a0;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>中国地图天气查询</h1>
+    </div>
+    <div id="chart-container"></div>
+    <div id="weather-panel">
+        <button id="close-panel" title="关闭">&times;</button>
+        <h2 id="city-name"></h2>
+        <div id="loading">正在加载天气数据...</div>
+        <div id="weather-content" style="display:none;">
+            <div class="weather-item"><span class="label">天气:</span><span class="value" id="w-weather"></span></div>
+            <div class="weather-item"><span class="label">温度:</span><span class="value" id="w-temp"></span></div>
+            <div class="weather-item"><span class="label">风向/风力:</span><span class="value" id="w-wind"></span></div>
+            <div class="weather-item"><span class="label">湿度:</span><span class="value" id="w-humidity"></span></div>
+            <a id="detail-link" href="#" target="_blank" rel="noopener noreferrer">查看详情</a>
+        </div>
+        <div id="weather-error" style="display:none; color:#e94560; font-size:13px; margin-top:8px;"></div>
+    </div>
+
+    <script>
+        // 省份名映射（地图 GeoJSON 中的名称 -> 查询用名称）
+        const provinceMap = {
+            '北京市': '北京', '天津市': '天津', '上海市': '上海', '重庆市': '重庆',
+            '河北省': '河北', '山西省': '山西', '辽宁省': '辽宁', '吉林省': '吉林',
+            '黑龙江省': '黑龙江', '江苏省': '江苏', '浙江省': '浙江', '安徽省': '安徽',
+            '福建省': '福建', '江西省': '江西', '山东省': '山东', '河南省': '河南',
+            '湖北省': '湖北', '湖南省': '湖南', '广东省': '广东', '海南省': '海南',
+            '四川省': '四川', '贵州省': '贵州', '云南省': '云南', '陕西省': '陕西',
+            '甘肃省': '甘肃', '青海省': '青海', '台湾省': '台湾',
+            '内蒙古自治区': '内蒙古', '广西壮族自治区': '广西', '西藏自治区': '西藏',
+            '宁夏回族自治区': '宁夏', '新疆维吾尔自治区': '新疆',
+            '香港特别行政区': '香港', '澳门特别行政区': '澳门'
+        };
+
+        let myChart = null;
+        let currentCity = '';
+
+        // 安全转义 HTML，防止 XSS
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // 显示天气面板
+        function showWeatherPanel(city) {
+            const panel = document.getElementById('weather-panel');
+            const cityName = document.getElementById('city-name');
+            const content = document.getElementById('weather-content');
+            const loading = document.getElementById('loading');
+            const errorDiv = document.getElementById('weather-error');
+
+            cityName.textContent = escapeHtml(city);
+            content.style.display = 'none';
+            loading.style.display = 'block';
+            errorDiv.style.display = 'none';
+            panel.style.display = 'block';
+        }
+
+        // 更新天气数据
+        function updateWeather(data) {
+            const content = document.getElementById('weather-content');
+            const loading = document.getElementById('loading');
+
+            document.getElementById('w-weather').textContent = escapeHtml(data.weather || '未知');
+            document.getElementById('w-temp').textContent = escapeHtml(data.temp || '未知');
+            document.getElementById('w-wind').textContent = escapeHtml(data.wind || '未知');
+            document.getElementById('w-humidity').textContent = escapeHtml(data.humidity || '未知');
+
+            const detailLink = document.getElementById('detail-link');
+            const detailUrl = data.detail_url || '';
+            if (detailUrl && detailUrl.startsWith('http://www.weather.com.cn/')) {
+                detailLink.href = detailUrl;
+                detailLink.style.display = 'inline-block';
+            } else {
+                detailLink.style.display = 'none';
+            }
+
+            loading.style.display = 'none';
+            content.style.display = 'block';
+        }
+
+        // 显示天气查询错误
+        function showWeatherError(msg) {
+            const loading = document.getElementById('loading');
+            const errorDiv = document.getElementById('weather-error');
+            loading.style.display = 'none';
+            errorDiv.textContent = escapeHtml(msg);
+            errorDiv.style.display = 'block';
+        }
+
+        // 查询天气
+        async function fetchWeather(city) {
+            if (currentCity === city) return;
+            currentCity = city;
+
+            showWeatherPanel(city);
+
+            try {
+                const url = '/api/weather?city=' + encodeURIComponent(city);
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    showWeatherError(data.error || '查询失败');
+                    return;
+                }
+
+                updateWeather(data);
+            } catch (e) {
+                showWeatherError('网络请求失败，请稍后重试');
+            }
+        }
+
+        // 关闭天气面板
+        document.getElementById('close-panel').addEventListener('click', function() {
+            document.getElementById('weather-panel').style.display = 'none';
+            currentCity = '';
+        });
+
+        // 初始化地图
+        async function initMap() {
+            myChart = echarts.init(document.getElementById('chart-container'));
+
+            // 加载中国地图 GeoJSON
+            try {
+                const response = await fetch('/static/china.json');
+                const chinaJson = await response.json();
+                echarts.registerMap('china', chinaJson);
+            } catch (e) {
+                console.error('加载地图数据失败:', e);
+                document.getElementById('chart-container').innerHTML =
+                    '<p style="text-align:center;padding:50px;color:#e94560;">地图数据加载失败，请刷新页面重试</p>';
+                return;
+            }
+
+            const option = {
+                tooltip: {
+                    trigger: 'item',
+                    formatter: function(params) {
+                        const name = params.name;
+                        const queryName = provinceMap[name] || name;
+                        return '<span style="font-size:14px;font-weight:bold;">' + escapeHtml(name) + '</span><br/><span style="font-size:12px;color:#aaa;">悬停查看天气</span>';
+                    },
+                    backgroundColor: 'rgba(15, 52, 96, 0.9)',
+                    borderColor: '#e94560',
+                    textStyle: { color: '#fff' }
+                },
+                visualMap: {
+                    show: false,
+                    min: 0,
+                    max: 100,
+                    inRange: {
+                        color: ['#1a1a2e', '#16213e', '#0f3460', '#1a508b', '#2a6fbb']
+                    }
+                },
+                series: [{
+                    name: '中国',
+                    type: 'map',
+                    map: 'china',
+                    roam: true,
+                    zoom: 1.2,
+                    scaleLimit: { min: 0.8, max: 8 },
+                    label: {
+                        show: true,
+                        color: '#a0a0a0',
+                        fontSize: 10
+                    },
+                    emphasis: {
+                        label: {
+                            show: true,
+                            color: '#fff',
+                            fontSize: 13,
+                            fontWeight: 'bold'
+                        },
+                        itemStyle: {
+                            areaColor: '#e94560',
+                            shadowBlur: 20,
+                            shadowColor: 'rgba(233, 69, 96, 0.5)'
+                        }
+                    },
+                    itemStyle: {
+                        areaColor: '#16213e',
+                        borderColor: '#0f3460',
+                        borderWidth: 1
+                    },
+                    data: []
+                }]
+            };
+
+            myChart.setOption(option);
+
+            // 鼠标悬停事件
+            let hoverTimer = null;
+            myChart.on('mouseover', function(params) {
+                if (params.componentType === 'series') {
+                    const name = params.name;
+                    const queryName = provinceMap[name] || name;
+                    // 延迟 300ms 查询，避免频繁请求
+                    clearTimeout(hoverTimer);
+                    hoverTimer = setTimeout(function() {
+                        fetchWeather(queryName);
+                    }, 300);
+                }
+            });
+
+            myChart.on('mouseout', function(params) {
+                clearTimeout(hoverTimer);
+            });
+
+            // 响应窗口大小变化
+            window.addEventListener('resize', function() {
+                myChart.resize();
+            });
+        }
+
+        initMap();
+    </script>
+</body>
+</html>
